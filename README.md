@@ -27,7 +27,7 @@
 
 ### 3. 단계별 구축 방법
 
-#### 사전 준비: 공통 환경변수 설정 (최초 1회)
+#### 사전 준비: 공통 환경변수 설정 및 필수 API/버킷 준비 (최초 1회)
 아래 명령어의 `your-gcp-project-id`와 `gs://your-staging-bucket`만 고객사 환경에 맞게 수정하여 터미널에 선언해 두면, **0단계부터 5단계까지의 모든 명령어를 별도 수정 없이 그대로 복사·붙여넣기하여 실행**할 수 있습니다.
 
 ```bash
@@ -40,6 +40,19 @@ export STAGING_BUCKET="gs://your-staging-bucket"
 gcloud config set project $PROJECT_ID
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
 echo "Project ID: $PROJECT_ID / Project Number: $PROJECT_NUMBER / Region: $REGION"
+
+# 3. 필수 GCP API 활성화 (Compute, Vertex AI, Network Services, Network Security)
+gcloud services enable \
+    compute.googleapis.com \
+    aiplatform.googleapis.com \
+    networkservices.googleapis.com \
+    networksecurity.googleapis.com \
+    --project=$PROJECT_ID
+
+# 4. 에이전트 배포용 GCS 스테이징 버킷 생성 (기존 버킷이 없는 경우에만 실행)
+gcloud storage buckets create $STAGING_BUCKET \
+    --project=$PROJECT_ID \
+    --location=$REGION
 ```
 
 ---
@@ -452,3 +465,57 @@ remote_agent = agent_engines.create(
 1. **가능 여부**: 완벽하게 가능합니다.
 2. **핵심 방식**: **PSC Interface (`agent-nat-psc-attachment`)**로 Agent 트래픽을 고객 VPC(`agent-nat-vpc`)로 유입 $\rightarrow$ **Secure Web Proxy (`10.10.10.50:3128`)** 경유 $\rightarrow$ **Cloud NAT (수동 할당 모드, `ENDPOINT_TYPE_SWG`)**를 통해 사전에 확보한 **고정 공용 IP (`agent-nat-static-ip`)**로 변환되어 데이터센터로 전송됩니다.
 3. **작업 포인트**: GCP 측에서 예약한 리전 고정 IP 주소를 데이터센터 네트워크 보안팀에 전달하여 인바운드 ACL(화이트리스트)에 등록하시면 됩니다.
+
+---
+
+### 부록: 테스트 리소스 삭제 (Clean-up) 순서 가이드
+
+PoC 검증 완료 후 과금 방지 및 리소스 정리가 필요한 경우, **네트워크 의존성 역순**으로 아래 명령어를 순서대로 실행하여 안전하게 삭제할 수 있습니다.
+
+```bash
+# 1. 배포된 Vertex AI Agent Engine 삭제 (리소스 ID 확인 후 삭제)
+python3 -c "
+import os, vertexai
+from vertexai import agent_engines
+vertexai.init(project=os.environ['PROJECT_ID'], location=os.environ.get('REGION', 'asia-northeast3'))
+for agent in agent_engines.list(filter='display_name=\"agent-nat-swp-verify-agent\"'):
+    print('Deleting:', agent.resource_name)
+    agent.delete(force=True)
+"
+
+# 2. Secure Web Proxy 게이트웨이 및 보안 정책 삭제
+gcloud network-services gateways delete agent-swp-gateway \
+    --location=$REGION --project=$PROJECT_ID --quiet
+
+gcloud network-security gateway-security-policies rules delete allow-datacenter-api \
+    --gateway-security-policy=agent-swp-policy \
+    --location=$REGION --project=$PROJECT_ID --quiet
+
+gcloud network-security gateway-security-policies delete agent-swp-policy \
+    --location=$REGION --project=$PROJECT_ID --quiet
+
+# 3. PSC Network Attachment 삭제 (에이전트 삭제 후 약 1~2분 뒤 연결 해제 완료 시 삭제 가능)
+gcloud compute network-attachments delete agent-nat-psc-attachment \
+    --region=$REGION --project=$PROJECT_ID --quiet
+
+# 4. Cloud NAT 및 Cloud Router 삭제
+gcloud compute routers nats delete agent-nat-gateway \
+    --router=agent-nat-router --region=$REGION --project=$PROJECT_ID --quiet
+
+gcloud compute routers delete agent-nat-router \
+    --region=$REGION --project=$PROJECT_ID --quiet
+
+# 5. 예약된 고정 외부 IP 반환(삭제)
+gcloud compute addresses delete agent-nat-static-ip \
+    --region=$REGION --project=$PROJECT_ID --quiet
+
+# 6. 서브넷 3종 및 커스텀 VPC 삭제
+for SUBNET in agent-psc-subnet agent-swp-subnet agent-proxy-subnet; do
+    gcloud compute networks subnets delete $SUBNET \
+        --region=$REGION --project=$PROJECT_ID --quiet
+done
+
+gcloud compute networks delete agent-nat-vpc \
+    --project=$PROJECT_ID --quiet
+```
+
