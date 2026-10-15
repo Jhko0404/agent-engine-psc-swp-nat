@@ -13,8 +13,8 @@
   * Agent Platform(또는 Vertex AI Agent Engine)의 기본 인터넷 Egress는 Google 내부 테넌트 풀의 공용 IP 대역을 동적으로 공유하여 나갑니다.
   * 이 대역은 IP가 유동적이고 Google Cloud 전체 사용자 대역과 겹치므로 데이터센터 방화벽에 단일 고정 IP로 등록할 수 없습니다.
 * **해결 원리**:
-  * 에이전트의 Egress 트래픽을 **PSC Interface (Private Service Connect Interface)**를 통해 고객사 VPC로 인입시킵니다.
-  * 고객사 VPC 내부에 **Google Cloud Secure Web Proxy (SWP)**를 배치하고, 외부로 나가는 길목에 **Cloud NAT (Manual IP Allocation)**을 연결하여 **사전에 예약해 둔 고정 외부 IP(Static External IP, 예: `203.0.113.10`)**로 SNAT(Source Network Address Translation) 처리합니다.
+  * 에이전트의 Egress 트래픽을 **PSC Interface**(Private Service Connect Interface)를 통해 고객사 VPC로 인입시킵니다.
+  * 고객사 VPC 내부에 **Google Cloud Secure Web Proxy**(SWP)를 배치하고, 외부로 나가는 길목에 **Cloud NAT**(Manual IP Allocation)을 연결하여 **사전에 예약해 둔 고정 외부 IP**(Static External IP, 예: `203.0.113.10`)로 SNAT(Source Network Address Translation) 처리합니다.
   * 데이터센터 방화벽에는 이 예약된 Cloud NAT의 고정 공용 IP만 등록하면 됩니다.
 
 ---
@@ -116,8 +116,8 @@ gcloud compute addresses describe agent-nat-static-ip \
 자동 IP 할당(`--auto-allocate-nat-external-ips`) 대신 **수동 IP 할당 모드**를 지정하여 1단계에서 예약한 고정 IP(`agent-nat-static-ip`)를 등록합니다.
 
 > **⚠️ 핵심 주의 (`--endpoint-types=ENDPOINT_TYPE_SWG` 및 `--min-ports-per-vm=1024`)**:
-> 1. Cloud NAT의 기본 엔드포인트 타입은 일반 VM용(`ENDPOINT_TYPE_VM`)입니다. **Secure Web Proxy(SWP)**에서 나가는 트래픽을 고정 IP로 SNAT 처리하려면 반드시 **`--endpoint-types=ENDPOINT_TYPE_SWG`** 옵션을 명시해야 합니다.
-> 2. SWP는 내부적으로 여러 대의 관리형 Envoy 프록시 인스턴스를 실행하며, SWP용 Cloud NAT의 기본 `min-ports-per-vm` 값(32,768)을 그대로 두면 단일 고정 IP(총 64,512 포트)로 1대의 Envoy에만 포트가 할당되어 타임아웃이 발생할 수 있습니다. 반드시 **`--min-ports-per-vm=1024`**를 함께 지정하여 모든 SWP 인스턴스에 NAT 포트가 고르게 분배(`minExtraNatIpsNeeded: 0`)되도록 설정하세요.
+> 1. Cloud NAT의 기본 엔드포인트 타입은 일반 VM용(`ENDPOINT_TYPE_VM`)입니다. **Secure Web Proxy**(SWP)에서 나가는 트래픽을 고정 IP로 SNAT 처리하려면 반드시 `--endpoint-types=ENDPOINT_TYPE_SWG` 옵션을 명시해야 합니다.
+> 2. SWP는 내부적으로 여러 대의 관리형 Envoy 프록시 인스턴스를 실행하며, SWP용 Cloud NAT의 기본 `min-ports-per-vm` 값(32,768)을 그대로 두면 단일 고정 IP(총 64,512 포트)로 1대의 Envoy에만 포트가 할당되어 타임아웃이 발생할 수 있습니다. 반드시 `--min-ports-per-vm=1024` 옵션을 함께 지정하여 모든 SWP 인스턴스에 NAT 포트가 고르게 분배(`minExtraNatIpsNeeded: 0`)되도록 설정하세요.
 > 3. 만약 3단계(SWP 배포)를 먼저 실행한 경우, GCP가 자동으로 `swg-autogen-router-*` 및 `swg-autogen-nat`를 생성합니다. 이 경우 아래 `2-B` 명령어로 자동 생성된 `swg-autogen-nat`에 고정 IP와 `--min-ports-per-vm=1024`를 업데이트하면 됩니다.
 
 ```bash
@@ -161,7 +161,7 @@ gcloud compute routers nats list \
 
 ![Step 3: Secure Web Proxy (SWP) Explicit Mode Without TLS Certs](assets/step3_swp_proxy.png)
 
-에이전트가 PSC Interface를 통해 도구 호출을 수행할 때, 공용 인터넷 목적지 도메인(`https://api.datacenter.com`)을 안전하게 처리할 완전 관리형 **Google Cloud Secure Web Proxy (SWP)**를 VPC 서브넷(`agent-proxy-subnet`)에 배치합니다.
+에이전트가 PSC Interface를 통해 도구 호출을 수행할 때, 공용 인터넷 목적지 도메인(`https://api.datacenter.com`)을 안전하게 처리할 완전 관리형 **Google Cloud Secure Web Proxy**(SWP)를 VPC 서브넷(`agent-proxy-subnet`)에 배치합니다.
 
 > **💡 핵심 포인트 (TLS 인증서 없이 SWP 배포하기)**:
 > SWP 게이트웨이 YAML 작성 시 불필요한 `scope` 필드와 `certificateUrls` 필드를 제외하고 `routingMode: EXPLICIT_ROUTING_MODE`로 지정하면, **별도의 TLS 인증서 생성/등록 없이도 표준 HTTP CONNECT 프록시(`http://10.10.10.50:3128`)로 즉시 배포**할 수 있습니다.
@@ -276,12 +276,12 @@ gcloud network-services gateways list \
 
 ![Step 4: PSC Interface & Network Attachment Connection](assets/step4_psc_interface.png)
 
-에이전트(Google 관리형 테넌트 프로젝트에서 실행됨)가 고객 VPC(`agent-nat-vpc`) 내부로 직접 들어올 수 있도록 **"가상 랜선 콘센트"** 역할을 하는 전용 서브넷(`agent-psc-subnet`)과 **Network Attachment(`agent-nat-psc-attachment`)**를 생성합니다.
+에이전트(Google 관리형 테넌트 프로젝트에서 실행됨)가 고객 VPC(`agent-nat-vpc`) 내부로 직접 들어올 수 있도록 **가상 랜선 콘센트** 역할을 하는 전용 서브넷(`agent-psc-subnet`)과 **Network Attachment**(`agent-nat-psc-attachment`)를 생성합니다.
 
 * **핵심 역할 요약**:
   1. **`agent-psc-subnet` (`10.10.20.0/28`)**: 구글 관리형 영역에 있는 에이전트에게 빌려줄 사설 IP 묶음(풀)입니다.
-  2. **`agent-nat-psc-attachment` (`Network Attachment`)**: 에이전트가 고객 VPC(`agent-nat-vpc`)에 가상 랜선(NIC)을 꽂을 수 있게 해주는 **연결 포트(콘센트)**입니다. `--connection-preference=ACCEPT_AUTOMATIC`으로 설정하여 에이전트 배포 시 별도 수동 승인 없이 즉시 연결됩니다.
-  3. **연결 후 효과**: 에이전트가 `10.10.20.x` IP를 달고 고객 VPC 내부 일원처럼 동작하므로, 3단계에서 만든 **`agent-swp-gateway` (`http://10.10.10.50:3128`)**와 내부 사설망으로 직접 통신할 수 있게 됩니다.
+  2. **`agent-nat-psc-attachment` (`Network Attachment`)**: 에이전트가 고객 VPC(`agent-nat-vpc`)에 가상 랜선(NIC)을 꽂을 수 있게 해주는 **연결 포트**(콘센트)입니다. `--connection-preference=ACCEPT_AUTOMATIC`으로 설정하여 에이전트 배포 시 별도 수동 승인 없이 즉시 연결됩니다.
+  3. **연결 후 효과**: 에이전트가 `10.10.20.x` IP를 달고 고객 VPC 내부 일원처럼 동작하므로, 3단계에서 만든 **SWP 게이트웨이**(`agent-swp-gateway`, `http://10.10.10.50:3128`)와 내부 사설망으로 직접 통신할 수 있게 됩니다.
 
 ```bash
 # 1. PSC Interface 전용 서브넷(agent-psc-subnet) 생성
@@ -312,7 +312,7 @@ gcloud compute network-attachments list \
 
 실제 운영 환경에서는 1단계에서 예약한 고정 외부 IP(`agent-nat-static-ip`, 예: `203.0.113.10`)를 데이터센터 인바운드 방화벽(WAF/보안장비)에 **Source IP**로 허용 등록합니다.
 
-연동 전 또는 별도의 데이터센터 테스트 서버가 없는 환경에서는, 요청자의 공인 IP를 그대로 반환해 주는 공개 API(**`https://api.ipify.org?format=json`**)를 호출하는 에이전트를 배포하여 **에이전트의 외부 진출(Egress) IP가 예약한 고정 외부 IP와 정확히 일치하는지 검증**합니다.
+연동 전 또는 별도의 데이터센터 테스트 서버가 없는 환경에서는, 요청자의 공인 IP를 그대로 반환해 주는 **공개 API**(`https://api.ipify.org?format=json`)를 호출하는 에이전트를 배포하여 **에이전트의 외부 진출(Egress) IP가 예약한 고정 외부 IP와 정확히 일치하는지 검증**합니다.
 
 ##### 5-1. 예약된 고정 공인 IP 확인 및 Vertex AI 서비스 에이전트 IAM 권한 부여 (최초 1회)
 Vertex AI Reasoning Engine 서비스 에이전트가 `agent-nat-psc-attachment`에 네트워크 인터페이스를 연결할 수 있도록 `compute.networkAdmin` 및 `dns.peer` 권한을 부여합니다.
@@ -342,14 +342,14 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 ##### 5-2. 에이전트에 적용해야 할 설정/코드 변경 사항 및 배포 검증
 
-기존 에이전트가 우리가 구축한 **PSC Interface + Secure Web Proxy(`http://10.10.10.50:3128`)**를 경유하여 고정 공인 IP로 나가도록 하려면 딱 **2가지 설정**이 필요합니다.
+기존 에이전트가 우리가 구축한 **PSC Interface + Secure Web Proxy**(`http://10.10.10.50:3128`)를 경유하여 고정 공인 IP로 나가도록 하려면 딱 **2가지 설정**이 필요합니다.
 
 1. **배포 시 네트워크 연결 설정 (`psc_interface_config`)**:
    * `agent_engines.create()` 호출 시 `psc_interface_config`에 4단계에서 만든 `agent-nat-psc-attachment`를 지정합니다.
    * 이 설정이 들어가야 Google 관리형 영역의 에이전트 컨테이너에 `10.10.20.x` 대역의 가상 NIC가 연결되어 고객 VPC 내부의 사설 IP인 `10.10.10.50:3128`(SWP)과 통신할 수 있습니다.
 2. **에이전트 외부 호출 시 프록시 주소(`http://10.10.10.50:3128`) 지정**:
    * **이유**: PSC Interface는 기본적으로 **사설 IP(`10.x.x.x` 등)로 향하는 트래픽만 고객 VPC로 라우팅**합니다. 프록시 지정 없이 공인 도메인(`https://api.ipify.org`, 외부 데이터센터 공인 IP 등)을 그냥 호출하면 PSC Interface를 타지 않고 Google 기본 인터넷 망으로 나가게 됩니다.
-   * 따라서 아래 **방법 A(코드 내 지정)** 또는 **방법 B(코드 수정 없이 환경변수로 일괄 지정)** 중 하나를 선택하여 트래픽이 먼저 SWP 사설 IP(`10.10.10.50:3128`)로 향하도록 구성합니다.
+   * 따라서 아래 **방법 A**(코드 내 지정) 또는 **방법 B**(코드 수정 없이 환경변수로 일괄 지정) 중 하나를 선택하여 트래픽이 먼저 SWP 사설 IP(`10.10.10.50:3128`)로 향하도록 구성합니다.
 
 ###### 🔹 방법 A: 외부 호출 도구(Tool) 코드에 명시적으로 프록시 지정 및 검증 스크립트(`verify_egress_ip.py`) 실행
 특정 외부 데이터센터 API 호출 함수에만 프록시를 적용하고 싶을 때 사용하는 방식입니다. (`requests` 사용 시 `requests.get(url, proxies={"https": SWP_PROXY_URL})`, `httpx` 사용 시 `httpx.Client(proxy=SWP_PROXY_URL)`로 동일하게 적용 가능합니다.)
@@ -464,7 +464,7 @@ gcloud compute network-attachments describe agent-nat-psc-attachment \
 
 ![Chapter 4: Alternative Private Hybrid Connectivity (VPN / Interconnect)](assets/chapter4_hybrid_vpn_interconnect.png)
 
-만약 데이터센터가 이미 GCP와 **Cloud Interconnect(전용선)** 또는 **Cloud VPN**으로 연결되어 있다면, 트래픽을 굳이 공용 인터넷으로 돌리지 않고 **내부 사설 IP로 직접 통신**하는 것이 보안 및 지연시간 측면에서 훨씬 유리합니다.
+만약 데이터센터가 이미 GCP와 **Cloud Interconnect**(전용선) 또는 **Cloud VPN**으로 연결되어 있다면, 트래픽을 굳이 공용 인터넷으로 돌리지 않고 **내부 사설 IP로 직접 통신**하는 것이 보안 및 지연시간 측면에서 훨씬 유리합니다.
 
 * **동작 방식**: 
   $$\text{Agent Platform} \xrightarrow{\text{PSC-I}} \text{고객 VPC} \xrightarrow{\text{Cloud Router (BGP)}} \xrightarrow{\text{VPN / Interconnect}} \text{데이터센터 사설망}$$
@@ -474,7 +474,7 @@ gcloud compute network-attachments describe agent-nat-psc-attachment \
 
 ### 5. 핵심 요약
 1. **가능 여부**: 완벽하게 가능합니다.
-2. **핵심 방식**: **PSC Interface (`agent-nat-psc-attachment`)**로 Agent 트래픽을 고객 VPC(`agent-nat-vpc`)로 유입 $\rightarrow$ **Secure Web Proxy (`10.10.10.50:3128`)** 경유 $\rightarrow$ **Cloud NAT (수동 할당 모드, `ENDPOINT_TYPE_SWG`)**를 통해 사전에 확보한 **고정 공용 IP (`agent-nat-static-ip`)**로 변환되어 데이터센터로 전송됩니다.
+2. **핵심 방식**: **PSC Interface** (`agent-nat-psc-attachment`)로 Agent 트래픽을 고객 VPC(`agent-nat-vpc`)로 유입 $\rightarrow$ **Secure Web Proxy** (`10.10.10.50:3128`) 경유 $\rightarrow$ **Cloud NAT** (수동 할당 모드, `ENDPOINT_TYPE_SWG`)를 통해 사전에 확보한 **고정 공용 IP** (`agent-nat-static-ip`)로 변환되어 데이터센터로 전송됩니다.
 3. **작업 포인트**: GCP 측에서 예약한 리전 고정 IP 주소를 데이터센터 네트워크 보안팀에 전달하여 인바운드 ACL(화이트리스트)에 등록하시면 됩니다.
 
 ---
