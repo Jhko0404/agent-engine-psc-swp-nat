@@ -63,7 +63,7 @@ gcloud storage buckets create $STAGING_BUCKET \
 
 기존에 사용 중인 VPC가 없다면 아래 명령어로 에이전트 외부 통신을 위한 커스텀 VPC(`agent-nat-vpc`)와 프록시를 배치할 기본 사설 서브넷(`agent-proxy-subnet`)을 먼저 생성합니다.
 
-> **💡 참고**: 프로젝트 내 기존 VPC 목록을 먼저 확인하려면 `gcloud compute networks list` 명령어를 실행하세요. 만약 기존 VPC를 그대로 사용하려면 이후 단계의 `--network=agent-nat-vpc`를 기존 VPC 이름으로 변경하여 실행하면 됩니다.
+> **💡 참고**: 프로젝트 내 기존 VPC 목록을 먼저 확인하려면 `gcloud compute networks list` 명령어를 실행하세요. 만약 기존 VPC를 그대로 사용하려면 이후 단계의 `--network=agent-nat-vpc`를 기존 VPC 이름으로 변경하여 실행하면 됩니다. (단, 3단계 SWP 프록시 IP인 `10.10.10.50`은 반드시 `agent-proxy-subnet`의 대역인 `10.10.10.0/24`에 속해야 하므로, 서브넷 대역을 변경할 경우 3단계와 5단계의 프록시 IP도 해당 대역에 맞게 함께 변경하세요.)
 
 ```bash
 # 1. 기존 VPC 네트워크 목록 확인
@@ -176,95 +176,99 @@ gcloud compute routers nats list \
 
 ##### 🔹 단계별 가이드: Google Cloud Secure Web Proxy (SWP) 무인증서 구성
 
-0. **필수 GCP API 2종 활성화 (최초 1회)**
-   SWP 게이트웨이와 보안 정책 관리를 위해 필요한 API를 활성화합니다.
-   ```bash
-   gcloud services enable \
-       networkservices.googleapis.com \
-       networksecurity.googleapis.com \
-       --project=$PROJECT_ID
-   ```
+**0. 필수 GCP API 2종 활성화 (최초 1회)**
+SWP 게이트웨이와 보안 정책 관리를 위해 필요한 API를 활성화합니다.
 
-1. **프록시 전용 서브넷(`agent-swp-subnet`, `REGIONAL_MANAGED_PROXY`) 생성**
-   SWP(Secure Web Proxy)가 내부적으로 사용할 리전 프록시 전용 서브넷(최소 `/26` 이상 권장, 여기서는 `/24`)을 생성하고 확인합니다.
-   ```bash
-   # 프록시 전용 서브넷 생성
-   gcloud compute networks subnets create agent-swp-subnet \
-       --project=$PROJECT_ID \
-       --network=agent-nat-vpc \
-       --region=$REGION \
-       --range=10.10.30.0/24 \
-       --purpose=REGIONAL_MANAGED_PROXY \
-       --role=ACTIVE
+```bash
+gcloud services enable \
+    networkservices.googleapis.com \
+    networksecurity.googleapis.com \
+    --project=$PROJECT_ID
+```
 
-   # 생성된 서브넷 목록 확인 (agent-proxy-subnet, agent-swp-subnet 확인)
-   gcloud compute networks subnets list \
-       --project=$PROJECT_ID \
-       --network=agent-nat-vpc \
-       --regions=$REGION
-   ```
+**1. 프록시 전용 서브넷(`agent-swp-subnet`, `REGIONAL_MANAGED_PROXY`) 생성**
+SWP(Secure Web Proxy)가 내부적으로 사용할 리전 프록시 전용 서브넷(최소 `/26` 이상 권장, 여기서는 `/24`)을 생성하고 확인합니다.
 
-2. **Gateway 보안 정책(`agent-swp-policy`) 및 허용 규칙(`allow-datacenter-api`) 생성**
-   `gateway-security-policies import` 명령어를 사용하여 보안 정책과 도메인 허용 규칙을 생성합니다.
-   ```bash
-   # 1. 보안 정책(agent-swp-policy) 생성
-   gcloud network-security gateway-security-policies import agent-swp-policy \
-       --project=$PROJECT_ID \
-       --location=$REGION \
-       --source=- <<EOF
-   name: projects/${PROJECT_ID}/locations/${REGION}/gatewaySecurityPolicies/agent-swp-policy
-   description: Agent SWP Security Policy
-   EOF
+```bash
+# 프록시 전용 서브넷 생성
+gcloud compute networks subnets create agent-swp-subnet \
+    --project=$PROJECT_ID \
+    --network=agent-nat-vpc \
+    --region=$REGION \
+    --range=10.10.30.0/24 \
+    --purpose=REGIONAL_MANAGED_PROXY \
+    --role=ACTIVE
 
-   # 2-A. [테스트/검증용 기본] 외부 호스트 호출 허용 규칙 생성
-   gcloud network-security gateway-security-policies rules import allow-datacenter-api \
-       --project=$PROJECT_ID \
-       --gateway-security-policy=agent-swp-policy \
-       --location=$REGION \
-       --source=- <<EOF
-   name: projects/${PROJECT_ID}/locations/${REGION}/gatewaySecurityPolicies/agent-swp-policy/rules/allow-datacenter-api
-   basicProfile: ALLOW
-   enabled: true
-   priority: 100
-   sessionMatcher: "host() != ''"
-   EOF
+# 생성된 서브넷 목록 확인 (agent-proxy-subnet, agent-swp-subnet 확인)
+gcloud compute networks subnets list \
+    --project=$PROJECT_ID \
+    --network=agent-nat-vpc \
+    --regions=$REGION
+```
 
-   # 2-B. [실무 운영 권장] 특정 데이터센터 도메인만 허용하려면 sessionMatcher를 아래와 같이 지정합니다:
-   # sessionMatcher: "host() == 'api.datacenter.com' || host() == 'api.ipify.org'"
+**2. Gateway 보안 정책(`agent-swp-policy`) 및 허용 규칙(`allow-datacenter-api`) 생성**
+`gateway-security-policies import` 명령어를 사용하여 보안 정책과 도메인 허용 규칙을 생성합니다.
 
-   # 3. 생성된 보안 정책 및 규칙 목록 확인
-   gcloud network-security gateway-security-policies list \
-       --project=$PROJECT_ID \
-       --location=$REGION
-   gcloud network-security gateway-security-policies rules list \
-       --project=$PROJECT_ID \
-       --gateway-security-policy=agent-swp-policy \
-       --location=$REGION
-   ```
+```bash
+# 1. 보안 정책(agent-swp-policy) 생성
+gcloud network-security gateway-security-policies import agent-swp-policy \
+    --project=$PROJECT_ID \
+    --location=$REGION \
+    --source=- <<EOF
+name: projects/${PROJECT_ID}/locations/${REGION}/gatewaySecurityPolicies/agent-swp-policy
+description: Agent SWP Security Policy
+EOF
 
-3. **Secure Web Proxy 게이트웨이(`agent-swp-gateway`) 무인증서 배포 (`EXPLICIT_ROUTING_MODE`)**
-   `scope`와 `certificateUrls`를 제외하고 `routingMode: EXPLICIT_ROUTING_MODE`를 지정하여 사설 IP(`10.10.10.50`)와 포트(`3128`)로 SWP 인스턴스를 배포합니다.
-   ```bash
-   # SWP 게이트웨이 배포 (인증서 없이 배포, 약 30초 소요)
-   gcloud network-services gateways import agent-swp-gateway \
-       --project=$PROJECT_ID \
-       --location=$REGION \
-       --source=- <<EOF
-   name: projects/${PROJECT_ID}/locations/${REGION}/gateways/agent-swp-gateway
-   type: SECURE_WEB_GATEWAY
-   addresses: ["10.10.10.50"]
-   ports: [3128]
-   routingMode: EXPLICIT_ROUTING_MODE
-   gatewaySecurityPolicy: projects/${PROJECT_ID}/locations/${REGION}/gatewaySecurityPolicies/agent-swp-policy
-   network: projects/${PROJECT_ID}/global/networks/agent-nat-vpc
-   subnetwork: projects/${PROJECT_ID}/regions/${REGION}/subnetworks/agent-proxy-subnet
-   EOF
+# 2-A. [테스트/검증용 기본] 외부 호스트 호출 허용 규칙 생성
+gcloud network-security gateway-security-policies rules import allow-datacenter-api \
+    --project=$PROJECT_ID \
+    --gateway-security-policy=agent-swp-policy \
+    --location=$REGION \
+    --source=- <<EOF
+name: projects/${PROJECT_ID}/locations/${REGION}/gatewaySecurityPolicies/agent-swp-policy/rules/allow-datacenter-api
+basicProfile: ALLOW
+enabled: true
+priority: 100
+sessionMatcher: "host() != ''"
+EOF
 
-   # 배포된 SWP 게이트웨이 목록 및 상태 확인
-   gcloud network-services gateways list \
-       --project=$PROJECT_ID \
-       --location=$REGION
-   ```
+# 2-B. [실무 운영 권장] 특정 데이터센터 도메인만 허용하려면 sessionMatcher를 아래와 같이 지정합니다:
+# sessionMatcher: "host() == 'api.datacenter.com' || host() == 'api.ipify.org'"
+
+# 3. 생성된 보안 정책 및 규칙 목록 확인
+gcloud network-security gateway-security-policies list \
+    --project=$PROJECT_ID \
+    --location=$REGION
+gcloud network-security gateway-security-policies rules list \
+    --project=$PROJECT_ID \
+    --gateway-security-policy=agent-swp-policy \
+    --location=$REGION
+```
+
+**3. Secure Web Proxy 게이트웨이(`agent-swp-gateway`) 무인증서 배포 (`EXPLICIT_ROUTING_MODE`)**
+`scope`와 `certificateUrls`를 제외하고 `routingMode: EXPLICIT_ROUTING_MODE`를 지정하여 사설 IP(`10.10.10.50`)와 포트(`3128`)로 SWP 인스턴스를 배포합니다.
+
+```bash
+# SWP 게이트웨이 배포 (인증서 없이 배포, 약 30초 소요)
+gcloud network-services gateways import agent-swp-gateway \
+    --project=$PROJECT_ID \
+    --location=$REGION \
+    --source=- <<EOF
+name: projects/${PROJECT_ID}/locations/${REGION}/gateways/agent-swp-gateway
+type: SECURE_WEB_GATEWAY
+addresses: ["10.10.10.50"]
+ports: [3128]
+routingMode: EXPLICIT_ROUTING_MODE
+gatewaySecurityPolicy: projects/${PROJECT_ID}/locations/${REGION}/gatewaySecurityPolicies/agent-swp-policy
+network: projects/${PROJECT_ID}/global/networks/agent-nat-vpc
+subnetwork: projects/${PROJECT_ID}/regions/${REGION}/subnetworks/agent-proxy-subnet
+EOF
+
+# 배포된 SWP 게이트웨이 목록 및 상태 확인
+gcloud network-services gateways list \
+    --project=$PROJECT_ID \
+    --location=$REGION
+```
 
 ---
 
@@ -353,8 +357,11 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 리포지토리에 포함된 `verify_egress_ip.py`를 바로 실행하거나 아래 Python 코드를 실행하여 검증할 수 있습니다.
 
 ```bash
-# 필수 패키지 설치 및 검증 스크립트 실행
-pip install "google-cloud-aiplatform[agent_engines]>=1.70.0" cloudpickle
+# 1. (로컬 PC 터미널 실행 시 최초 1회) Python SDK용 Application Default Credentials(ADC) 인증
+gcloud auth application-default login
+
+# 2. 필수 패키지 설치 및 검증 스크립트 실행
+pip install -r requirements.txt
 python3 verify_egress_ip.py
 ```
 
@@ -429,23 +436,27 @@ remote_agent = agent_engines.create(
 
 ##### 5-3. 정상 배포 및 검증 확인 방법
 
-1. **Network Attachment (`agent-nat-psc-attachment`) 자동 연결 상태 확인**:
-   ```bash
-   gcloud compute network-attachments describe agent-nat-psc-attachment \
-       --region=$REGION \
-       --project=$PROJECT_ID
-   ```
-   출력 결과의 `connectionEndpoints` 항목에 `10.10.20.2` 등의 IP가 `status: ACCEPTED`로 표시되면 정상 연결된 것입니다.
+**1. Network Attachment (`agent-nat-psc-attachment`) 자동 연결 상태 확인**:
 
-2. **에이전트 쿼리(`api.ipify.org`) 응답 결과 확인**:
-   ```json
-   {
-     "question": "현재 에이전트가 외부로 나가는 공인 IP가 무엇인가요?",
-     "swp_proxy_used": "http://10.10.10.50:3128",
-     "detected_egress_public_ip": "{\"ip\":\"203.0.113.10\"}"
-   }
-   ```
-   `detected_egress_public_ip` 값이 1단계에서 예약한 `STATIC_NAT_IP`(예: `203.0.113.10`)와 일치하면 전체 구간(`Agent Engine` $\rightarrow$ `PSC Interface` $\rightarrow$ `SWP (10.10.10.50:3128)` $\rightarrow$ `Cloud NAT 고정 IP`)이 정상 동작하는 것입니다.
+```bash
+gcloud compute network-attachments describe agent-nat-psc-attachment \
+    --region=$REGION \
+    --project=$PROJECT_ID
+```
+
+출력 결과의 `connectionEndpoints` 항목에 `10.10.20.2` 등의 IP가 `status: ACCEPTED`로 표시되면 정상 연결된 것입니다.
+
+**2. 에이전트 쿼리(`api.ipify.org`) 응답 결과 확인**:
+
+```json
+{
+  "question": "현재 에이전트가 외부로 나가는 공인 IP가 무엇인가요?",
+  "swp_proxy_used": "http://10.10.10.50:3128",
+  "detected_egress_public_ip": "{\"ip\":\"203.0.113.10\"}"
+}
+```
+
+`detected_egress_public_ip` 값이 1단계에서 예약한 `STATIC_NAT_IP`(예: `203.0.113.10`)와 일치하면 전체 구간(`Agent Engine` $\rightarrow$ `PSC Interface` $\rightarrow$ `SWP (10.10.10.50:3128)` $\rightarrow$ `Cloud NAT 고정 IP`)이 정상 동작하는 것입니다.
 
 ---
 
@@ -494,16 +505,19 @@ gcloud network-security gateway-security-policies rules delete allow-datacenter-
 gcloud network-security gateway-security-policies delete agent-swp-policy \
     --location=$REGION --project=$PROJECT_ID --quiet
 
-# 3. PSC Network Attachment 삭제 (에이전트 삭제 후 약 1~2분 뒤 연결 해제 완료 시 삭제 가능)
-gcloud compute network-attachments delete agent-nat-psc-attachment \
-    --region=$REGION --project=$PROJECT_ID --quiet
+# 3. PSC Network Attachment 삭제 (에이전트 삭제 후 테넌트 연결 해제 완료 시까지 대기 후 삭제)
+until gcloud compute network-attachments delete agent-nat-psc-attachment \
+    --region=$REGION --project=$PROJECT_ID --quiet 2>/dev/null; do
+    echo "PSC Network Attachment 연결 해제 대기 중... (10초 후 재시도)"
+    sleep 10
+done
 
-# 4. Cloud NAT 및 Cloud Router 삭제
-gcloud compute routers nats delete agent-nat-gateway \
-    --router=agent-nat-router --region=$REGION --project=$PROJECT_ID --quiet
-
-gcloud compute routers delete agent-nat-router \
-    --region=$REGION --project=$PROJECT_ID --quiet
+# 4. Cloud NAT 및 Cloud Router 삭제 (수동 생성 라우터 및 SWP 자동 생성 라우터 모두 정리)
+for ROUTER in $(gcloud compute routers list --project=$PROJECT_ID --regions=$REGION --filter="network:agent-nat-vpc" --format="value(name)"); do
+    echo "Deleting Cloud Router: $ROUTER"
+    gcloud compute routers delete $ROUTER \
+        --region=$REGION --project=$PROJECT_ID --quiet
+done
 
 # 5. 예약된 고정 외부 IP 반환(삭제)
 gcloud compute addresses delete agent-nat-static-ip \
